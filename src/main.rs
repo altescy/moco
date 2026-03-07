@@ -25,6 +25,7 @@ struct Cli {
 enum Commands {
     Serve(ServeCommand),
     Add(AddCommand),
+    List(ListCommand),
     Logs(LogsCommand),
     Report(ReportCommand),
 }
@@ -86,6 +87,12 @@ struct LogsCommand {
 }
 
 #[derive(Args, Debug)]
+struct ListCommand {
+    #[arg(long)]
+    config: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
 struct ReportCommand {
     #[arg(long)]
     audit_db: Option<PathBuf>,
@@ -139,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Serve(command) => run_serve(command).await,
         Commands::Add(command) => run_add(command),
+        Commands::List(command) => run_list(command).await,
         Commands::Logs(command) => run_logs(command),
         Commands::Report(command) => run_report(command),
     }
@@ -217,6 +225,49 @@ fn run_add(command: AddCommand) -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&path, content)?;
 
     eprintln!("saved server '{}' to {}", command.name, path.display());
+
+    Ok(())
+}
+
+async fn run_list(command: ListCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let config = ConfigManager::load_resolved(None, &cwd, command.config.as_deref())?;
+
+    if config.mcp.servers.is_empty() {
+        println!("no MCP servers configured");
+        return Ok(());
+    }
+
+    let mut names = config.mcp.servers.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+
+    println!("configured MCP servers: {}", names.len());
+    println!();
+
+    for name in names {
+        let Some(server_cfg) = config.mcp.servers.get(&name) else {
+            continue;
+        };
+
+        let transport = match server_cfg.transport {
+            TransportType::Stdio => "stdio",
+            TransportType::StreamableHttp => "streamable-http",
+        };
+
+        match build_downstream_client(&name, server_cfg).await {
+            Ok(client) => match client.list_tools().await {
+                Ok(tools) => {
+                    println!("[ok]   {name} ({transport}) tools={}", tools.len());
+                }
+                Err(err) => {
+                    println!("[fail] {name} ({transport}) {err}");
+                }
+            },
+            Err(err) => {
+                println!("[fail] {name} ({transport}) {err}");
+            }
+        }
+    }
 
     Ok(())
 }

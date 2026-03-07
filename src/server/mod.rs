@@ -3,16 +3,12 @@ use std::hash::{Hash, Hasher};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::warn;
 
-use crate::gateway::{Gateway, ToolCallResult, ToolDescriptor};
+use crate::gateway::{Gateway, ToolDescriptor};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
 const DEFAULT_TOOLS_PAGE_SIZE: usize = 32;
 const MAX_TOOLS_PAGE_SIZE: usize = 128;
-const TOOL_DISCOVER: &str = "hub::discover_tools";
-const TOOL_EXECUTE_INDEXED: &str = "hub::execute_indexed_tool";
-const TOOL_GET_SCHEMA: &str = "hub::get_tool_schema";
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -135,18 +131,7 @@ async fn handle_message(
         }
         "tools/list" => match gateway.list_tools().await {
             Ok(mut tools) => {
-                let virtual_tools = virtual_tool_descriptors();
-                let include_all_tools = params
-                    .get("includeAllTools")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-
-                if include_all_tools {
-                    tools.extend(virtual_tools.clone());
-                    tools.sort_by(|a, b| a.name.cmp(&b.name));
-                } else {
-                    tools = virtual_tools;
-                }
+                tools.sort_by(|a, b| a.name.cmp(&b.name));
 
                 let hash = toolset_hash(&tools);
                 if session
@@ -213,12 +198,7 @@ async fn handle_message(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let call_result = match name {
-                TOOL_DISCOVER => call_discover_tools(gateway, &arguments).await,
-                TOOL_EXECUTE_INDEXED => call_execute_indexed_tool(gateway, &arguments).await,
-                TOOL_GET_SCHEMA => call_get_tool_schema(gateway, &arguments).await,
-                _ => gateway.call_tool_for_mcp(name, &arguments).await,
-            };
+            let call_result = gateway.call_tool_for_mcp(name, &arguments).await;
 
             outbound.response = Some(json_rpc_result(
                 id,
@@ -229,7 +209,6 @@ async fn handle_message(
             ));
 
             if let Ok(mut tools) = gateway.list_tools().await {
-                tools.extend(virtual_tool_descriptors());
                 tools.sort_by(|a, b| a.name.cmp(&b.name));
                 let hash = toolset_hash(&tools);
                 if session
@@ -291,155 +270,6 @@ fn toolset_hash(tools: &[ToolDescriptor]) -> u64 {
     hasher.finish()
 }
 
-fn virtual_tool_descriptors() -> Vec<ToolDescriptor> {
-    vec![
-        ToolDescriptor {
-            name: TOOL_DISCOVER.to_owned(),
-            description: Some("Search indexed tools without exposing all schemas".to_owned()),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" },
-                    "cursor": { "type": "string" },
-                    "pageSize": { "type": "integer", "minimum": 1, "maximum": 100 }
-                }
-            }),
-        },
-        ToolDescriptor {
-            name: TOOL_GET_SCHEMA.to_owned(),
-            description: Some("Fetch detailed schema for one indexed tool".to_owned()),
-            input_schema: json!({
-                "type": "object",
-                "required": ["tool"],
-                "properties": {
-                    "tool": { "type": "string" }
-                }
-            }),
-        },
-        ToolDescriptor {
-            name: TOOL_EXECUTE_INDEXED.to_owned(),
-            description: Some("Execute an indexed tool by its namespaced id".to_owned()),
-            input_schema: json!({
-                "type": "object",
-                "required": ["tool"],
-                "properties": {
-                    "tool": { "type": "string" },
-                    "arguments": { "type": "object" }
-                }
-            }),
-        },
-    ]
-}
-
-async fn call_discover_tools(gateway: &Gateway, arguments: &Value) -> ToolCallResult {
-    let query = arguments
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_lowercase();
-    let cursor = arguments
-        .get("cursor")
-        .and_then(Value::as_str)
-        .and_then(parse_cursor)
-        .unwrap_or(0);
-    let page_size = arguments
-        .get("pageSize")
-        .and_then(Value::as_u64)
-        .map(|v| v as usize)
-        .unwrap_or(20)
-        .clamp(1, 100);
-
-    match gateway.list_tools().await {
-        Ok(tools) => {
-            let mut filtered = tools
-                .into_iter()
-                .filter(|tool| {
-                    if query.is_empty() {
-                        return true;
-                    }
-                    let desc = tool
-                        .description
-                        .as_deref()
-                        .unwrap_or_default()
-                        .to_lowercase();
-                    tool.name.to_lowercase().contains(&query) || desc.contains(&query)
-                })
-                .collect::<Vec<_>>();
-
-            filtered.sort_by(|a, b| a.name.cmp(&b.name));
-            let total = filtered.len();
-            let items = filtered
-                .into_iter()
-                .skip(cursor)
-                .take(page_size)
-                .map(|tool| {
-                    json!({
-                        "tool": tool.name,
-                        "description": tool.description,
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            let mut payload = json!({
-                "items": items,
-                "total": total,
-            });
-            let next = cursor.saturating_add(payload["items"].as_array().map_or(0, |a| a.len()));
-            if next < total {
-                payload["nextCursor"] = Value::String(format!("offset:{next}"));
-            }
-
-            ToolCallResult {
-                content: json!([{"type":"text","text":payload.to_string()}]),
-                is_error: false,
-            }
-        }
-        Err(err) => {
-            warn!(error = %err, "discover_tools failed");
-            ToolCallResult::error_text(format!("discover_tools failed: {err}"))
-        }
-    }
-}
-
-async fn call_get_tool_schema(gateway: &Gateway, arguments: &Value) -> ToolCallResult {
-    let Some(tool_name) = arguments.get("tool").and_then(Value::as_str) else {
-        return ToolCallResult::error_text("missing required field: tool");
-    };
-
-    match gateway.list_tools().await {
-        Ok(tools) => {
-            let found = tools.into_iter().find(|tool| tool.name == tool_name);
-            match found {
-                Some(tool) => ToolCallResult {
-                    content: json!([{
-                        "type": "text",
-                        "text": json!({
-                            "tool": tool.name,
-                            "description": tool.description,
-                            "inputSchema": tool.input_schema
-                        })
-                        .to_string()
-                    }]),
-                    is_error: false,
-                },
-                None => ToolCallResult::error_text(format!("tool not found: {tool_name}")),
-            }
-        }
-        Err(err) => ToolCallResult::error_text(format!("get_tool_schema failed: {err}")),
-    }
-}
-
-async fn call_execute_indexed_tool(gateway: &Gateway, arguments: &Value) -> ToolCallResult {
-    let Some(tool_name) = arguments.get("tool").and_then(Value::as_str) else {
-        return ToolCallResult::error_text("missing required field: tool");
-    };
-    let args = arguments
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    gateway.call_tool_for_mcp(tool_name, &args).await
-}
-
 fn json_rpc_result(id: Value, result: Value) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -476,11 +306,23 @@ mod tests {
     #[async_trait]
     impl DownstreamClient for MockDownstream {
         async fn list_tools(&self) -> Result<Vec<ToolDescriptor>, DownstreamError> {
-            Ok(vec![ToolDescriptor {
-                name: "search".to_owned(),
-                description: Some("search tool".to_owned()),
-                input_schema: json!({"type":"object"}),
-            }])
+            Ok(vec![
+                ToolDescriptor {
+                    name: "search".to_owned(),
+                    description: Some("search tool".to_owned()),
+                    input_schema: json!({"type":"object"}),
+                },
+                ToolDescriptor {
+                    name: "fetch".to_owned(),
+                    description: Some("fetch tool".to_owned()),
+                    input_schema: json!({"type":"object"}),
+                },
+                ToolDescriptor {
+                    name: "summarize".to_owned(),
+                    description: Some("summarize tool".to_owned()),
+                    input_schema: json!({"type":"object"}),
+                },
+            ])
         }
 
         async fn call_tool(
@@ -549,23 +391,8 @@ mod tests {
             .and_then(Value::as_array)
             .expect("tools array missing");
         assert_eq!(tools.len(), 3);
-        assert_eq!(tools[0].get("name"), Some(&json!("hub::discover_tools")));
-
-        let list_all = handle_message(
-            &gateway,
-            &mut session,
-            json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"includeAllTools":true}}),
-        )
-        .await
-        .response
-        .expect("tools/list response expected");
-        let all_tools = list_all
-            .get("result")
-            .and_then(|v| v.get("tools"))
-            .and_then(Value::as_array)
-            .expect("tools array missing");
         assert!(
-            all_tools
+            tools
                 .iter()
                 .any(|tool| tool.get("name") == Some(&json!("mock::search")))
         );
@@ -614,7 +441,7 @@ mod tests {
                 "jsonrpc":"2.0",
                 "id":1,
                 "method":"tools/list",
-                "params":{"includeAllTools":true,"pageSize":2}
+                "params":{"pageSize":2}
             }),
         )
         .await
@@ -640,7 +467,7 @@ mod tests {
                 "jsonrpc":"2.0",
                 "id":2,
                 "method":"tools/list",
-                "params":{"includeAllTools":true,"pageSize":2,"cursor":next_cursor}
+                "params":{"pageSize":2,"cursor":next_cursor}
             }),
         )
         .await

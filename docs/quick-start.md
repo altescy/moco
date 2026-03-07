@@ -88,6 +88,14 @@ Add to `opencode.json`:
 
 ## 5) Inspect audit logs and report
 
+By default, `moco` exposes downstream tools in `tools/list` with their full `inputSchema`, so MCP clients can call namespaced tools directly (for example, `deepwiki::ask_question`) with structured arguments.
+
+Check configured MCP servers and availability:
+
+```bash
+moco list
+```
+
 Recent events:
 
 ```bash

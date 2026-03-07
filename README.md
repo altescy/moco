@@ -19,14 +19,11 @@ This repository is still in an early stage, and behavior/configuration may chang
 - Expose multiple downstream MCP servers as a single MCP server (`stdio`)
 - Connect to downstream MCP servers via `stdio` or `streamable-http`
 - Namespace tool names as `server::tool`
+- Provide downstream tool input schemas directly via `tools/list` for structured tool calling
 - Apply security checks on both pre-call and post-call paths
   - rule-specific detector schema (`regex` / `keyword` / `builtin` / `high_risk_tool`)
   - local PII and credential detection
   - detection on decoded strings (base64 / URL-encoded / JSON-escaped)
-- Provide lazy-index meta tools
-  - `hub::discover_tools`
-  - `hub::get_tool_schema`
-  - `hub::execute_indexed_tool`
 - Built-in audit logging (SQLite)
 
 ## Install
@@ -64,6 +61,12 @@ moco add everything -- npx -y @modelcontextprotocol/server-everything
 ```
 
 This writes or updates `[mcp.servers.<name>]` in `.moco/config.toml`.
+
+Check configured MCP servers and availability:
+
+```bash
+moco list
+```
 
 ## MCP Client Setup
 
