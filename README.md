@@ -16,12 +16,11 @@ This repository is still in an early development stage, and behavior/configurati
   - `hub::discover_tools`
   - `hub::get_tool_schema`
   - `hub::execute_indexed_tool`
-- Optional audit logging (JSONL)
+- Built-in audit logging (SQLite)
 
 ## Configuration
 
-- Project config: `.moco.toml` (recommended)
-- Backward-compatible fallback: `.mcps.toml` (legacy name, still supported for now)
+- Project config: `.moco/config.toml`
 
 Minimal example:
 
@@ -48,24 +47,29 @@ cargo run -- serve
 
 `moco serve` starts as a stdio MCP server.
 
+By default, audit logging is enabled and written to `.moco/audit.db`.
+
 ## Add server config from CLI
 
 ```bash
 cargo run -- add everything -- npx -y @modelcontextprotocol/server-everything
 ```
 
-This writes or updates the `[mcp.servers.<name>]` entry in `.moco.toml` (or an existing project config if present).
+This writes or updates the `[mcp.servers.<name>]` entry in `.moco/config.toml`.
 
-## Audit logging (optional)
+## Audit logs and reports
+
+Show recent logs:
 
 ```bash
-MCPS_AUDIT_LOG=.moco-audit.jsonl cargo run
+cargo run -- logs --limit 100
 ```
 
-Optional tuning:
+Show summary report:
 
-- `MCPS_AUDIT_MAX_BYTES` (default: 10MB)
-- `MCPS_AUDIT_MAX_FILES` (default: 3)
+```bash
+cargo run -- report --top-tools 10
+```
 
 ## Project status
 

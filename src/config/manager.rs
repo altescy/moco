@@ -4,13 +4,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::schema::{RawConfig, ResolvedConfig};
+use crate::paths::PROJECT_CONFIG_RELATIVE_PATH;
 
-const PROJECT_CONFIG_NAMES: [&str; 4] = [
-    ".moco.toml",
-    ".moco/config.toml",
-    ".mcps.toml",
-    ".mcps/config.toml",
-];
+const PROJECT_CONFIG_NAMES: [&str; 1] = [PROJECT_CONFIG_RELATIVE_PATH];
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -91,7 +87,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("moco-test-{}", std::process::id()));
         let project = root.join("nested/deep");
         fs::create_dir_all(&project).expect("create project dir");
-        let config_path = root.join(".moco.toml");
+        let config_path = crate::paths::default_project_config_path(&root);
+        fs::create_dir_all(config_path.parent().expect("config parent"))
+            .expect("create config dir");
         fs::write(&config_path, "[security]\nmode=\"enforce\"\n").expect("write config");
 
         let found = ConfigManager::find_project_config(&project).expect("config not found");

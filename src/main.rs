@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use moco::audit::AuditLogger;
+use moco::audit::{AuditLogger, AuditSummary};
 use moco::config::{ConfigManager, RawConfig, ServerConfig, TransportType};
 use moco::gateway::{Gateway, build_downstream_client};
+use moco::paths::{default_audit_db_path, default_project_config_path};
 use moco::security::LocalPiiProvider;
 use moco::server::run_stdio_server;
+use owo_colors::OwoColorize;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -23,12 +25,18 @@ struct Cli {
 enum Commands {
     Serve(ServeCommand),
     Add(AddCommand),
+    Logs(LogsCommand),
+    Report(ReportCommand),
 }
 
 #[derive(Args, Debug)]
 struct ServeCommand {
     #[arg(long)]
     config: Option<PathBuf>,
+    #[arg(long)]
+    audit_db: Option<PathBuf>,
+    #[arg(long)]
+    no_audit: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -67,6 +75,22 @@ struct AddCommand {
     timeout_ms: Option<u64>,
     #[arg(long)]
     replace: bool,
+}
+
+#[derive(Args, Debug)]
+struct LogsCommand {
+    #[arg(long)]
+    audit_db: Option<PathBuf>,
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
+#[derive(Args, Debug)]
+struct ReportCommand {
+    #[arg(long)]
+    audit_db: Option<PathBuf>,
+    #[arg(long, default_value_t = 10)]
+    top_tools: usize,
 }
 
 fn parse_key_value(raw: &str) -> Result<(String, String), String> {
@@ -115,6 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Serve(command) => run_serve(command).await,
         Commands::Add(command) => run_add(command),
+        Commands::Logs(command) => run_logs(command),
+        Commands::Report(command) => run_report(command),
     }
 }
 
@@ -123,17 +149,12 @@ async fn run_serve(command: ServeCommand) -> Result<(), Box<dyn std::error::Erro
     let config = ConfigManager::load_resolved(None, &cwd, command.config.as_deref())?;
 
     let mut gateway = Gateway::new(config.security.clone());
-    if let Some(path) = std::env::var_os("MCPS_AUDIT_LOG") {
-        let max_bytes = std::env::var("MCPS_AUDIT_MAX_BYTES")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(10 * 1024 * 1024);
-        let max_files = std::env::var("MCPS_AUDIT_MAX_FILES")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(3);
-        let logger = AuditLogger::new(&PathBuf::from(path), max_bytes, max_files)?;
+
+    if !command.no_audit {
+        let audit_path = resolve_audit_db_path(&cwd, command.audit_db.as_deref());
+        let logger = AuditLogger::new(&audit_path)?;
         gateway = gateway.with_audit_logger(Arc::new(logger));
+        eprintln!("audit enabled: {}", audit_path.display());
     }
 
     gateway = gateway.with_pii_provider(Arc::new(LocalPiiProvider));
@@ -202,11 +223,194 @@ fn run_add(command: AddCommand) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn resolve_project_config_path(cwd: &std::path::Path, explicit: Option<&std::path::Path>) -> PathBuf {
+fn run_logs(command: LogsCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let path = resolve_audit_db_path(&cwd, command.audit_db.as_deref());
+    let logger = AuditLogger::new(&path)?;
+    let entries = logger.recent_entries(command.limit)?;
+
+    if entries.is_empty() {
+        println!("no audit events found in {}", path.display());
+        return Ok(());
+    }
+
+    for entry in entries.iter().rev() {
+        println!(
+            "ts={} req={} phase={} status={} tool={} findings={} reasons={} reason_hashes={}",
+            entry.timestamp_ms,
+            entry.request_id,
+            entry.phase,
+            entry.status,
+            entry.tool,
+            entry.findings,
+            entry.reasons,
+            entry.reason_hashes.join(",")
+        );
+    }
+
+    Ok(())
+}
+
+fn run_report(command: ReportCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let path = resolve_audit_db_path(&cwd, command.audit_db.as_deref());
+    let logger = AuditLogger::new(&path)?;
+    let summary = logger.summarize(command.top_tools)?;
+
+    print_summary(&summary, &path);
+    Ok(())
+}
+
+fn print_summary(summary: &AuditSummary, path: &Path) {
+    let width = terminal_width();
+    let title = "Moco Audit Report"
+        .bold()
+        .truecolor(232, 236, 241)
+        .to_string();
+    let db_label = "db    ".bold().truecolor(125, 145, 168).to_string();
+    let events_label = "events".bold().truecolor(125, 145, 168).to_string();
+    let total_events = summary.total_events.to_string();
+
+    println!("{title}");
+    println!();
+    println!(
+        "{db_label:<8} {}",
+        path.display().to_string().truecolor(162, 176, 192)
+    );
+    println!(
+        "{events_label:<8} {}",
+        total_events.bold().truecolor(226, 232, 240)
+    );
+    println!();
+    println!("{}", horizontal_rule('─', width).truecolor(88, 104, 122));
+    println!();
+
+    print_distribution("Status", &summary.by_status, summary.total_events, width);
+    println!();
+    print_distribution("Phase", &summary.by_phase, summary.total_events, width);
+    println!();
+    print_distribution("Top Tools", &summary.top_tools, summary.total_events, width);
+}
+
+fn print_distribution(title: &str, values: &[(String, i64)], total: i64, width: usize) {
+    println!("{}", title.bold().truecolor(158, 187, 214));
+    if values.is_empty() {
+        println!("{}", "  (none)".truecolor(122, 134, 148));
+        return;
+    }
+
+    let max_key_width = width.saturating_sub(24).clamp(12, 42);
+    let key_width = values
+        .iter()
+        .map(|(key, _)| key.chars().count().min(max_key_width))
+        .max()
+        .unwrap_or(12)
+        .max(12);
+    let bar_width = width.saturating_sub(key_width + 20).clamp(10, 50);
+
+    for (key, count) in values {
+        let plain_label = truncate_with_ellipsis(key, max_key_width);
+        let label = format!("{plain_label:<key_width$}");
+        let ratio = ratio_percent(*count, total);
+        let bar = bar_for_ratio(ratio, bar_width);
+        let count_text = format!("{:>6}", count);
+        let ratio_text = format!("{:>6.1}%", ratio);
+        println!(
+            "{}  {}  {}  {}",
+            label.truecolor(210, 218, 228),
+            count_text.truecolor(192, 204, 216),
+            ratio_text.truecolor(152, 170, 190),
+            bar
+        );
+    }
+}
+
+fn ratio_percent(count: i64, total: i64) -> f64 {
+    if total <= 0 {
+        return 0.0;
+    }
+    (count as f64 / total as f64) * 100.0
+}
+
+fn bar_for_ratio(ratio_percent: f64, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    const FULL: char = '━';
+    const TIP: char = '╸';
+
+    let units = (ratio_percent / 100.0) * width as f64;
+    let full = units.floor() as usize;
+    let has_tip = full < width && (units - full as f64) >= 0.5;
+
+    let filled = full.min(width);
+    let tip_cells = usize::from(has_tip);
+    let remainder = width.saturating_sub(filled + tip_cells);
+
+    let complete = FULL.to_string().repeat(filled);
+    let tip = if has_tip {
+        TIP.to_string()
+    } else {
+        String::new()
+    };
+    let pending = FULL.to_string().repeat(remainder);
+
+    if should_use_color() {
+        let tip_colored = if tip.is_empty() {
+            String::new()
+        } else {
+            tip.cyan().to_string()
+        };
+        format!(
+            "{}{}{}",
+            complete.cyan(),
+            tip_colored,
+            pending.truecolor(90, 95, 105)
+        )
+    } else {
+        format!("{complete}{tip}{pending}")
+    }
+}
+
+fn should_use_color() -> bool {
+    std::env::var_os("NO_COLOR").is_none()
+}
+
+fn truncate_with_ellipsis(value: &str, max_width: usize) -> String {
+    if value.chars().count() <= max_width {
+        return value.to_owned();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+    let clipped: String = value.chars().take(max_width - 3).collect();
+    format!("{clipped}...")
+}
+
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v.clamp(70, 140))
+        .unwrap_or(96)
+}
+
+fn horizontal_rule(ch: char, width: usize) -> String {
+    std::iter::repeat_n(ch, width).collect()
+}
+
+fn resolve_project_config_path(cwd: &Path, explicit: Option<&Path>) -> PathBuf {
     if let Some(path) = explicit {
         return path.to_path_buf();
     }
-    ConfigManager::find_project_config(cwd).unwrap_or_else(|| cwd.join(".moco.toml"))
+    ConfigManager::find_project_config(cwd).unwrap_or_else(|| default_project_config_path(cwd))
+}
+
+fn resolve_audit_db_path(cwd: &Path, explicit: Option<&Path>) -> PathBuf {
+    explicit
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| default_audit_db_path(cwd))
 }
 
 fn validate_add_command(command: &AddCommand) -> Result<(), io::Error> {

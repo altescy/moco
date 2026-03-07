@@ -1,1 +1,4 @@
 /target
+/.moco/audit.db
+/.moco/audit.db-shm
+/.moco/audit.db-wal
