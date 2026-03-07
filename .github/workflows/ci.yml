@@ -20,6 +20,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Restore Rust cache
@@ -47,6 +48,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2.8.2
