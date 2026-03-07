@@ -62,12 +62,14 @@ jobs:
           ARCHIVE_EXT: ${{ matrix.archive_ext }}
         run: |
           ASSET_NAME="moco-${TAG}-${TARGET}.${ARCHIVE_EXT}"
+          METADATA_FILE="release-metadata-${TARGET}.txt"
           mkdir -p dist
           cp "target/${TARGET}/release/${BIN_NAME}" dist/
           tar -C dist -czf "$ASSET_NAME" "$BIN_NAME"
           SHA256="$(shasum -a 256 "$ASSET_NAME" | cut -d ' ' -f1)"
-          printf "%s\t%s\t%s\n" "$TARGET" "$ASSET_NAME" "$SHA256" > release-metadata.txt
+          printf "%s\t%s\t%s\n" "$TARGET" "$ASSET_NAME" "$SHA256" > "$METADATA_FILE"
           echo "ASSET_PATH=$ASSET_NAME" >> "$GITHUB_ENV"
+          echo "METADATA_PATH=$METADATA_FILE" >> "$GITHUB_ENV"
 
       - name: Package archive (Windows)
         if: runner.os == 'Windows'
@@ -79,12 +81,14 @@ jobs:
           ARCHIVE_EXT: ${{ matrix.archive_ext }}
         run: |
           $assetName = "moco-$env:TAG-$env:TARGET.$env:ARCHIVE_EXT"
+          $metadataFile = "release-metadata-$env:TARGET.txt"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item "target/$env:TARGET/release/$env:BIN_NAME" "dist/$env:BIN_NAME" -Force
           Compress-Archive -Path "dist/$env:BIN_NAME" -DestinationPath $assetName -Force
           $sha256 = (Get-FileHash -Algorithm SHA256 $assetName).Hash.ToLower()
-          "$env:TARGET`t$assetName`t$sha256" | Out-File -FilePath release-metadata.txt -Encoding utf8
+          "$env:TARGET`t$assetName`t$sha256" | Out-File -FilePath $metadataFile -Encoding utf8
           "ASSET_PATH=$assetName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "METADATA_PATH=$metadataFile" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2.5.0
@@ -96,7 +100,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.0
         with:
           name: release-metadata-${{ matrix.target }}
-          path: release-metadata.txt
+          path: ${{ env.METADATA_PATH }}
           if-no-files-found: error
 
   update-homebrew-formula:
