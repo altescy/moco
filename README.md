@@ -6,8 +6,6 @@
 
 `moco` is a lightweight MCP hub/proxy that aggregates multiple MCP servers and provides built-in security controls.
 
-This repository is still in an early stage, and behavior/configuration may change.
-
 ## Docs
 
 - [Documentation Index](docs/index.md)
@@ -45,14 +43,6 @@ cargo install --git https://github.com/altescy/moco moco
 ```
 
 ## Usage
-
-Start `moco` as a stdio MCP server:
-
-```bash
-moco serve
-```
-
-By default, audit logging is enabled and written to `.moco/audit.db`.
 
 Add a downstream MCP server configuration:
 
