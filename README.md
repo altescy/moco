@@ -43,10 +43,18 @@ preset_level = "balanced"
 ## Run
 
 ```bash
-cargo run
+cargo run -- serve
 ```
 
-`moco` starts as a stdio MCP server.
+`moco serve` starts as a stdio MCP server.
+
+## Add server config from CLI
+
+```bash
+cargo run -- add everything -- npx -y @modelcontextprotocol/server-everything
+```
+
+This writes or updates the `[mcp.servers.<name>]` entry in `.moco.toml` (or an existing project config if present).
 
 ## Audit logging (optional)
 

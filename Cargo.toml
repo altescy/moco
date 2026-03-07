@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1.89"
 base64 = "0.22.1"
+clap = { version = "4.5.31", features = ["derive"] }
 globset = "0.4.15"
 percent-encoding = "2.3.1"
 regex = "1.11.1"
