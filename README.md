@@ -1,4 +1,4 @@
-# moco - MCP Observation and Control Operator
+# 🫧 moco - MCP Observation and Control Operator
 
 [![CI](https://github.com/altescy/moco/actions/workflows/ci.yml/badge.svg)](https://github.com/altescy/moco/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/altescy/moco)](https://github.com/altescy/moco/releases/latest)
