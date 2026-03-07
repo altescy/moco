@@ -1,5 +1,9 @@
 # moco - MCP Observation and Control Operator
 
+[![CI](https://github.com/altescy/moco/actions/workflows/ci.yml/badge.svg)](https://github.com/altescy/moco/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/altescy/moco)](https://github.com/altescy/moco/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 `moco` is a lightweight MCP hub/proxy that aggregates multiple MCP servers.
 
 This repository is still in an early development stage, and behavior/configuration may change.
