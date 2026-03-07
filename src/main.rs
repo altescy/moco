@@ -209,10 +209,8 @@ fn run_add(command: AddCommand) -> Result<(), Box<dyn std::error::Error>> {
 
     servers.insert(command.name.clone(), build_server_config(&command));
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
     }
 
     let content = toml::to_string_pretty(&raw)?;
