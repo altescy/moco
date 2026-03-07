@@ -28,9 +28,10 @@
 
 ### Homebrew
 
-Install with a fully qualified formula name:
+Tap this repository, then install `moco`:
 
 ```bash
+brew tap altescy/moco https://github.com/altescy/moco
 brew install altescy/moco/moco
 ```
 
