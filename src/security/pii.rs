@@ -57,13 +57,14 @@ impl PiiProvider for LocalPiiProvider {
         }
 
         for token in extract_phone_candidates(text) {
-            if let Ok(number) = parse(None, token) {
-                if number.is_valid() {
+            match parse(None, token) {
+                Ok(number) if number.is_valid() => {
                     out.push(PiiMatch {
                         kind: PiiKind::Phone,
                         value: number.format().mode(Mode::E164).to_string(),
                     });
                 }
+                _ => {}
             }
         }
 

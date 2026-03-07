@@ -170,8 +170,7 @@ async fn handle_message(
                     .and_then(Value::as_u64)
                     .map(|v| v as usize)
                     .unwrap_or(DEFAULT_TOOLS_PAGE_SIZE)
-                    .min(MAX_TOOLS_PAGE_SIZE)
-                    .max(1);
+                    .clamp(1, MAX_TOOLS_PAGE_SIZE);
 
                 let total_tools = tools.len();
                 let page = tools

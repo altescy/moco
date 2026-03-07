@@ -176,16 +176,18 @@ fn evaluate_internal(
     let candidates = extract_text_candidates(value, &security.decoding);
     let mut findings = Vec::new();
 
-    if include_tool_overrides {
-        if let Some(status) = evaluate_tool_overrides(tool_name, security) {
-            findings.push(Finding {
-                detector: "tool_override".to_owned(),
-                action: status,
-                path: "tool".to_owned(),
-                message: format!("tool policy override matched: {tool_name}"),
-                excerpt: tool_name.to_owned(),
-            });
-        }
+    if let Some(status) = if include_tool_overrides {
+        evaluate_tool_overrides(tool_name, security)
+    } else {
+        None
+    } {
+        findings.push(Finding {
+            detector: "tool_override".to_owned(),
+            action: status,
+            path: "tool".to_owned(),
+            message: format!("tool policy override matched: {tool_name}"),
+            excerpt: tool_name.to_owned(),
+        });
     }
 
     for detector in &security.detectors {

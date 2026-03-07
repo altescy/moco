@@ -359,7 +359,7 @@ fn policy_error_result(prefix: &str, reasons: Vec<String>) -> ToolCallResult {
     let mut message = String::from(prefix);
     let sanitized = sanitize_reasons(&reasons);
     if !sanitized.is_empty() {
-        message.push_str("\n");
+        message.push('\n');
         message.push_str(&sanitized.join("\n"));
     }
     ToolCallResult::error_text(message)

@@ -472,10 +472,12 @@ async fn parse_jsonrpc_from_sse(
         }
     }
 
-    if !buffer.is_empty() {
-        if let Some(outcome) = process_sse_line(&buffer, &mut event, expected_request_id)? {
-            return outcome;
-        }
+    if let Some(outcome) = if buffer.is_empty() {
+        None
+    } else {
+        process_sse_line(&buffer, &mut event, expected_request_id)?
+    } {
+        return outcome;
     }
 
     if let Some(outcome) = finalize_sse_event(&mut event, expected_request_id)? {
