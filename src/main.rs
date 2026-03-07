@@ -231,18 +231,38 @@ fn run_add(command: AddCommand) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_list(command: ListCommand) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
+    let config_path = resolve_project_config_path(&cwd, command.config.as_deref());
     let config = ConfigManager::load_resolved(None, &cwd, command.config.as_deref())?;
 
     if config.mcp.servers.is_empty() {
-        println!("no MCP servers configured");
+        println!("{}", "Moco MCP Servers".bold().truecolor(232, 236, 241));
+        println!();
+        println!(
+            "{:<8} {}",
+            "config".bold().truecolor(125, 145, 168),
+            config_path.display().to_string().truecolor(162, 176, 192)
+        );
+        println!(
+            "{:<8} {}",
+            "servers".bold().truecolor(125, 145, 168),
+            "0".bold().truecolor(226, 232, 240)
+        );
         return Ok(());
+    }
+
+    #[derive(Debug)]
+    struct ServerRow {
+        name: String,
+        transport: &'static str,
+        status: &'static str,
+        tool_count: Option<usize>,
+        detail: String,
     }
 
     let mut names = config.mcp.servers.keys().cloned().collect::<Vec<_>>();
     names.sort();
 
-    println!("configured MCP servers: {}", names.len());
-    println!();
+    let mut rows = Vec::with_capacity(names.len());
 
     for name in names {
         let Some(server_cfg) = config.mcp.servers.get(&name) else {
@@ -257,16 +277,105 @@ async fn run_list(command: ListCommand) -> Result<(), Box<dyn std::error::Error>
         match build_downstream_client(&name, server_cfg).await {
             Ok(client) => match client.list_tools().await {
                 Ok(tools) => {
-                    println!("[ok]   {name} ({transport}) tools={}", tools.len());
+                    rows.push(ServerRow {
+                        name,
+                        transport,
+                        status: "ok",
+                        tool_count: Some(tools.len()),
+                        detail: "ready".to_owned(),
+                    });
                 }
                 Err(err) => {
-                    println!("[fail] {name} ({transport}) {err}");
+                    rows.push(ServerRow {
+                        name,
+                        transport,
+                        status: "fail",
+                        tool_count: None,
+                        detail: err.to_string(),
+                    });
                 }
             },
             Err(err) => {
-                println!("[fail] {name} ({transport}) {err}");
+                rows.push(ServerRow {
+                    name,
+                    transport,
+                    status: "fail",
+                    tool_count: None,
+                    detail: err.to_string(),
+                });
             }
         }
+    }
+
+    let ok_count = rows.iter().filter(|row| row.status == "ok").count();
+    let fail_count = rows.len().saturating_sub(ok_count);
+    let width = terminal_width();
+
+    println!("{}", "Moco MCP Servers".bold().truecolor(232, 236, 241));
+    println!();
+    println!(
+        "{:<8} {}",
+        "config".bold().truecolor(125, 145, 168),
+        config_path.display().to_string().truecolor(162, 176, 192)
+    );
+    println!(
+        "{:<8} {}",
+        "servers".bold().truecolor(125, 145, 168),
+        rows.len().to_string().bold().truecolor(226, 232, 240)
+    );
+    println!(
+        "{:<8} {}",
+        "ok".bold().truecolor(125, 145, 168),
+        ok_count.to_string().bold().green()
+    );
+    println!(
+        "{:<8} {}",
+        "fail".bold().truecolor(125, 145, 168),
+        fail_count.to_string().bold().red()
+    );
+    println!();
+    println!("{}", horizontal_rule('─', width).truecolor(88, 104, 122));
+    println!();
+
+    println!(
+        "{}  {}  {}  {}  {}",
+        "status".bold().truecolor(158, 187, 214),
+        format!("{:<24}", "server").bold().truecolor(158, 187, 214),
+        format!("{:<16}", "transport")
+            .bold()
+            .truecolor(158, 187, 214),
+        format!("{:>5}", "tools").bold().truecolor(158, 187, 214),
+        "detail".bold().truecolor(158, 187, 214),
+    );
+
+    for row in rows {
+        let status_plain = format!("{:<6}", row.status);
+        let status = if row.status == "ok" {
+            status_plain.bold().green().to_string()
+        } else {
+            status_plain.bold().red().to_string()
+        };
+        let tools = row
+            .tool_count
+            .map_or_else(|| "-".to_owned(), |count| count.to_string());
+        let detail_width = width.saturating_sub(56).clamp(16, 80);
+        let detail = truncate_with_ellipsis(&row.detail, detail_width);
+        let server_cell = format!("{:<24}", truncate_with_ellipsis(&row.name, 24));
+        let transport_cell = format!("{:<16}", row.transport);
+        let tools_cell = format!("{:>5}", tools);
+
+        println!(
+            "{}  {}  {}  {}  {}",
+            status,
+            server_cell.truecolor(210, 218, 228),
+            transport_cell.truecolor(192, 204, 216),
+            tools_cell.truecolor(192, 204, 216),
+            if row.status == "ok" {
+                detail.truecolor(122, 190, 140)
+            } else {
+                detail.truecolor(230, 160, 160)
+            }
+        );
     }
 
     Ok(())
