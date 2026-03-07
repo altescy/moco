@@ -57,6 +57,21 @@ cargo run -- add everything -- npx -y @modelcontextprotocol/server-everything
 
 This writes or updates the `[mcp.servers.<name>]` entry in `.moco/config.toml`.
 
+## Homebrew (tap)
+
+Install from tap:
+
+```bash
+brew tap altescy/moco
+brew install moco
+```
+
+During development (install from main HEAD):
+
+```bash
+brew install --HEAD altescy/moco/moco
+```
+
 ## Audit logs and reports
 
 Show recent logs:
