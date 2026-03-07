@@ -97,16 +97,6 @@ impl Default for ToolPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum DetectorType {
-    Regex,
-    Keyword,
-    Builtin,
-    #[default]
-    HighRiskTool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum DetectorTarget {
     ToolName,
     #[default]
@@ -114,21 +104,66 @@ pub enum DetectorTarget {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PiiKind {
+    #[default]
+    Email,
+    Phone,
+    Address,
+    Credential,
+    Other,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct DetectorConfig {
     pub name: String,
-    #[serde(rename = "type")]
-    pub detector_type: DetectorType,
     pub target: DetectorTarget,
-    pub patterns: Vec<String>,
-    pub keywords: Vec<String>,
-    pub rule: Option<String>,
-    pub region: Option<String>,
-    pub min_length: Option<usize>,
-    pub entropy_milli_threshold: Option<u32>,
     pub action: PolicyAction,
     pub decode: bool,
+    #[serde(flatten)]
+    pub rule: DetectorRuleConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DetectorRuleConfig {
+    Regex {
+        patterns: Vec<String>,
+    },
+    Keyword {
+        keywords: Vec<String>,
+    },
+    Builtin {
+        #[serde(flatten)]
+        rule: BuiltinRuleConfig,
+    },
+    HighRiskTool {
+        patterns: Vec<String>,
+    },
+}
+
+impl Default for DetectorRuleConfig {
+    fn default() -> Self {
+        Self::HighRiskTool {
+            patterns: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "rule", rename_all = "snake_case")]
+pub enum BuiltinRuleConfig {
+    PromptInjection,
+    CredentialEntropy {
+        min_length: Option<usize>,
+        entropy_milli_threshold: Option<u32>,
+    },
+    Pii {
+        #[serde(default)]
+        disabled: Vec<PiiKind>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,61 +333,64 @@ fn build_preset_detectors(presets: &[String], level: PresetLevel) -> Vec<Detecto
             "pii-basic" => {
                 out.push(DetectorConfig {
                     name: "preset::pii-basic::provider".to_owned(),
-                    detector_type: DetectorType::Builtin,
                     target: DetectorTarget::Arguments,
-                    rule: Some("pii".to_owned()),
                     action: match level {
                         PresetLevel::Strict => PolicyAction::Deny,
                         _ => PolicyAction::Confirm,
                     },
                     decode: true,
-                    ..Default::default()
+                    rule: DetectorRuleConfig::Builtin {
+                        rule: BuiltinRuleConfig::Pii {
+                            disabled: Vec::new(),
+                        },
+                    },
                 });
             }
             "credential-standard" => {
                 out.push(DetectorConfig {
                     name: "preset::credential-standard::entropy".to_owned(),
-                    detector_type: DetectorType::Builtin,
                     target: DetectorTarget::Arguments,
-                    rule: Some("credential_entropy".to_owned()),
                     action: match level {
                         PresetLevel::Monitor => PolicyAction::Confirm,
                         _ => PolicyAction::Deny,
                     },
                     decode: true,
-                    min_length: Some(20),
-                    entropy_milli_threshold: Some(3800),
-                    ..Default::default()
+                    rule: DetectorRuleConfig::Builtin {
+                        rule: BuiltinRuleConfig::CredentialEntropy {
+                            min_length: Some(20),
+                            entropy_milli_threshold: Some(3800),
+                        },
+                    },
                 });
                 out.push(DetectorConfig {
                     name: "preset::credential-standard::regex".to_owned(),
-                    detector_type: DetectorType::Regex,
                     target: DetectorTarget::Arguments,
-                    patterns: vec![
-                        "AKIA[0-9A-Z]{16}".to_owned(),
-                        "gh[pousr]_[A-Za-z0-9_]{20,}".to_owned(),
-                        "sk-[A-Za-z0-9]{20,}".to_owned(),
-                    ],
                     action: match level {
                         PresetLevel::Monitor => PolicyAction::Confirm,
                         _ => PolicyAction::Deny,
                     },
                     decode: true,
-                    ..Default::default()
+                    rule: DetectorRuleConfig::Regex {
+                        patterns: vec![
+                            "AKIA[0-9A-Z]{16}".to_owned(),
+                            "gh[pousr]_[A-Za-z0-9_]{20,}".to_owned(),
+                            "sk-[A-Za-z0-9]{20,}".to_owned(),
+                        ],
+                    },
                 });
             }
             "prompt-injection-basic" => {
                 out.push(DetectorConfig {
                     name: "preset::prompt-injection-basic".to_owned(),
-                    detector_type: DetectorType::Builtin,
                     target: DetectorTarget::Arguments,
-                    rule: Some("prompt_injection".to_owned()),
                     action: match level {
                         PresetLevel::Strict => PolicyAction::Deny,
                         _ => PolicyAction::Confirm,
                     },
                     decode: true,
-                    ..Default::default()
+                    rule: DetectorRuleConfig::Builtin {
+                        rule: BuiltinRuleConfig::PromptInjection,
+                    },
                 });
             }
             _ => {}
@@ -371,9 +409,12 @@ mod tests {
             security: Some(RawSecurityConfig {
                 detectors: vec![DetectorConfig {
                     name: "d1".to_owned(),
-                    detector_type: DetectorType::Keyword,
-                    keywords: vec!["old".to_owned()],
-                    ..Default::default()
+                    target: DetectorTarget::Arguments,
+                    action: PolicyAction::Allow,
+                    decode: false,
+                    rule: DetectorRuleConfig::Keyword {
+                        keywords: vec!["old".to_owned()],
+                    },
                 }],
                 ..Default::default()
             }),
@@ -383,9 +424,12 @@ mod tests {
             security: Some(RawSecurityConfig {
                 detectors: vec![DetectorConfig {
                     name: "d1".to_owned(),
-                    detector_type: DetectorType::Keyword,
-                    keywords: vec!["new".to_owned()],
-                    ..Default::default()
+                    target: DetectorTarget::Arguments,
+                    action: PolicyAction::Allow,
+                    decode: false,
+                    rule: DetectorRuleConfig::Keyword {
+                        keywords: vec!["new".to_owned()],
+                    },
                 }],
                 ..Default::default()
             }),
@@ -395,7 +439,10 @@ mod tests {
         let merged = base.merge(overlay);
         let resolved = merged.resolve();
         assert_eq!(resolved.security.detectors.len(), 1);
-        assert_eq!(resolved.security.detectors[0].keywords, vec!["new"]);
+        assert!(matches!(
+            &resolved.security.detectors[0].rule,
+            DetectorRuleConfig::Keyword { keywords } if keywords == &vec!["new".to_owned()]
+        ));
     }
 
     #[test]
@@ -410,19 +457,72 @@ mod tests {
         };
 
         let resolved = raw.resolve();
-        assert!(
-            resolved
-                .security
-                .detectors
-                .iter()
-                .any(|d| d.name == "preset::pii-basic::provider")
-        );
-        assert!(
-            resolved
-                .security
-                .detectors
-                .iter()
-                .any(|d| d.name == "preset::credential-standard::entropy")
-        );
+        assert!(resolved
+            .security
+            .detectors
+            .iter()
+            .any(|d| d.name == "preset::pii-basic::provider"));
+        assert!(resolved
+            .security
+            .detectors
+            .iter()
+            .any(|d| d.name == "preset::credential-standard::entropy"));
+    }
+
+    #[test]
+    fn parses_detector_with_type_tag() {
+        let raw = toml::from_str::<RawConfig>(
+            r#"
+[security]
+
+[[security.detectors]]
+name = "confirm-prod-keywords"
+type = "keyword"
+target = "all"
+keywords = ["production"]
+action = "confirm"
+decode = false
+"#,
+        )
+        .expect("parse raw config");
+
+        let detectors = &raw.security.expect("security").detectors;
+        assert_eq!(detectors.len(), 1);
+        assert!(matches!(
+            detectors[0].rule,
+            DetectorRuleConfig::Keyword { .. }
+        ));
+    }
+
+    #[test]
+    fn parses_builtin_detector_with_rule_tag() {
+        let raw = toml::from_str::<RawConfig>(
+            r#"
+[security]
+
+[[security.detectors]]
+name = "deny-entropy"
+type = "builtin"
+rule = "credential_entropy"
+target = "arguments"
+action = "deny"
+decode = true
+min_length = 24
+entropy_milli_threshold = 4000
+"#,
+        )
+        .expect("parse raw config");
+
+        let detectors = &raw.security.expect("security").detectors;
+        assert_eq!(detectors.len(), 1);
+        assert!(matches!(
+            &detectors[0].rule,
+            DetectorRuleConfig::Builtin {
+                rule: BuiltinRuleConfig::CredentialEntropy {
+                    min_length: Some(24),
+                    entropy_milli_threshold: Some(4000)
+                }
+            }
+        ));
     }
 }

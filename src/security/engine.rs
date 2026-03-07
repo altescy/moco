@@ -1,15 +1,14 @@
-use email_address::EmailAddress;
 use globset::{Glob, GlobMatcher};
-use phonenumber::{Mode, parse};
 use regex::Regex;
 use serde_json::Value;
 
 use crate::config::{
-    DetectorConfig, DetectorTarget, DetectorType, PolicyAction, SecurityConfig, SecurityMode,
+    BuiltinRuleConfig, DetectorConfig, DetectorRuleConfig, DetectorTarget, PolicyAction,
+    SecurityConfig, SecurityMode,
 };
 
 use super::decoder::{TextCandidate, extract_text_candidates};
-use super::pii::PiiProvider;
+use super::pii::{PiiKind, PiiProvider};
 
 #[derive(Debug, Clone)]
 pub struct ToolCallInput<'a> {
@@ -96,14 +95,15 @@ impl PolicyEngine {
         let mut findings = Vec::new();
 
         for detector in &security.detectors {
-            let Some(rule) = detector.rule.as_deref() else {
+            let DetectorRuleConfig::Builtin {
+                rule:
+                    BuiltinRuleConfig::Pii {
+                        disabled,
+                    },
+            } = &detector.rule
+            else {
                 continue;
             };
-            if detector.detector_type != DetectorType::Builtin
-                || (rule != "pii" && rule != "pii_provider")
-            {
-                continue;
-            }
 
             let action = PolicyStatus::from(detector.action);
             for candidate in filter_targets(detector.target, tool_name, &candidates) {
@@ -113,12 +113,15 @@ impl PolicyEngine {
 
                 let matches = provider.detect(&candidate.text).await;
                 for matched in matches {
+                    if disabled.contains(&to_config_pii_kind(&matched.kind)) {
+                        continue;
+                    }
                     findings.push(Finding {
                         detector: detector.name.clone(),
                         action,
                         path: candidate.path.clone(),
                         message: format!(
-                            "builtin rule '{rule}' matched via {} ({})",
+                            "builtin rule 'pii' matched via {} ({})",
                             provider.provider_name(),
                             matched.kind.as_str()
                         ),
@@ -146,6 +149,16 @@ impl PolicyEngine {
             decision: PolicyDecision { status, reasons },
             findings,
         }
+    }
+}
+
+fn to_config_pii_kind(kind: &PiiKind) -> crate::config::PiiKind {
+    match kind {
+        PiiKind::Email => crate::config::PiiKind::Email,
+        PiiKind::Phone => crate::config::PiiKind::Phone,
+        PiiKind::Address => crate::config::PiiKind::Address,
+        PiiKind::Credential => crate::config::PiiKind::Credential,
+        PiiKind::Other => crate::config::PiiKind::Other,
     }
 }
 
@@ -236,11 +249,15 @@ fn run_detector(
     tool_name: &str,
     candidates: &[TextCandidate],
 ) -> Vec<Finding> {
-    match detector.detector_type {
-        DetectorType::Regex => run_regex_detector(detector, tool_name, candidates),
-        DetectorType::Keyword => run_keyword_detector(detector, tool_name, candidates),
-        DetectorType::Builtin => run_builtin_detector(detector, tool_name, candidates),
-        DetectorType::HighRiskTool => run_high_risk_tool_detector(detector, tool_name),
+    match &detector.rule {
+        DetectorRuleConfig::Regex { patterns } => {
+            run_regex_detector(detector, tool_name, candidates, patterns)
+        }
+        DetectorRuleConfig::Keyword { keywords } => {
+            run_keyword_detector(detector, tool_name, candidates, keywords)
+        }
+        DetectorRuleConfig::Builtin { rule } => run_builtin_detector(detector, tool_name, candidates, rule),
+        DetectorRuleConfig::HighRiskTool { patterns } => run_high_risk_tool_detector(detector, tool_name, patterns),
     }
 }
 
@@ -248,12 +265,12 @@ fn run_regex_detector(
     detector: &DetectorConfig,
     tool_name: &str,
     candidates: &[TextCandidate],
+    patterns: &[String],
 ) -> Vec<Finding> {
     let mut out = Vec::new();
     let action = PolicyStatus::from(detector.action);
 
-    let regexes = detector
-        .patterns
+    let regexes = patterns
         .iter()
         .filter_map(|pattern| Regex::new(pattern).ok())
         .collect::<Vec<_>>();
@@ -282,6 +299,7 @@ fn run_keyword_detector(
     detector: &DetectorConfig,
     tool_name: &str,
     candidates: &[TextCandidate],
+    keywords: &[String],
 ) -> Vec<Finding> {
     let mut out = Vec::new();
     let action = PolicyStatus::from(detector.action);
@@ -292,7 +310,7 @@ fn run_keyword_detector(
         }
 
         let lowered = candidate.text.to_lowercase();
-        for keyword in &detector.keywords {
+        for keyword in keywords {
             if lowered.contains(&keyword.to_lowercase()) {
                 out.push(Finding {
                     detector: detector.name.clone(),
@@ -312,14 +330,12 @@ fn run_builtin_detector(
     detector: &DetectorConfig,
     tool_name: &str,
     candidates: &[TextCandidate],
+    rule: &BuiltinRuleConfig,
 ) -> Vec<Finding> {
-    let Some(rule) = detector.rule.as_deref() else {
-        return Vec::new();
-    };
     let action = PolicyStatus::from(detector.action);
 
     match rule {
-        "prompt_injection" => {
+        BuiltinRuleConfig::PromptInjection => {
             let patterns = [
                 "ignore previous instructions",
                 "you are now system",
@@ -338,7 +354,7 @@ fn run_builtin_detector(
                             detector: detector.name.clone(),
                             action,
                             path: candidate.path.clone(),
-                            message: format!("builtin rule '{rule}' matched"),
+                            message: "builtin rule 'prompt_injection' matched".to_owned(),
                             excerpt: clip(candidate.text.as_str()),
                         });
                         break;
@@ -347,118 +363,31 @@ fn run_builtin_detector(
             }
             out
         }
-        "pii_email" => run_pii_email_detector(detector, tool_name, candidates),
-        "pii_phone" => run_pii_phone_detector(detector, tool_name, candidates),
-        "pii_address_basic" => run_pii_address_basic_detector(detector, tool_name, candidates),
-        "credential_entropy" => run_credential_entropy_detector(detector, tool_name, candidates),
-        _ => Vec::new(),
+        BuiltinRuleConfig::CredentialEntropy {
+            min_length,
+            entropy_milli_threshold,
+        } => run_credential_entropy_detector(
+            detector,
+            tool_name,
+            candidates,
+            *min_length,
+            *entropy_milli_threshold,
+        ),
+        BuiltinRuleConfig::Pii { .. } => Vec::new(),
     }
-}
-
-fn run_pii_email_detector(
-    detector: &DetectorConfig,
-    tool_name: &str,
-    candidates: &[TextCandidate],
-) -> Vec<Finding> {
-    let action = PolicyStatus::from(detector.action);
-    let mut findings = Vec::new();
-
-    for candidate in filter_targets(detector.target, tool_name, candidates) {
-        if !detector.decode && candidate.decoded {
-            continue;
-        }
-
-        for token in split_word_candidates(&candidate.text) {
-            if token.contains('@') && EmailAddress::is_valid(token) {
-                findings.push(Finding {
-                    detector: detector.name.clone(),
-                    action,
-                    path: candidate.path.clone(),
-                    message: "builtin rule 'pii_email' matched".to_owned(),
-                    excerpt: clip(token),
-                });
-            }
-        }
-    }
-
-    findings
-}
-
-fn run_pii_phone_detector(
-    detector: &DetectorConfig,
-    tool_name: &str,
-    candidates: &[TextCandidate],
-) -> Vec<Finding> {
-    let action = PolicyStatus::from(detector.action);
-    let mut findings = Vec::new();
-
-    for candidate in filter_targets(detector.target, tool_name, candidates) {
-        if !detector.decode && candidate.decoded {
-            continue;
-        }
-
-        for token in extract_phone_candidates(&candidate.text) {
-            let parsed = parse(None, token);
-
-            if let Ok(number) = parsed {
-                if !number.is_valid() {
-                    continue;
-                }
-                findings.push(Finding {
-                    detector: detector.name.clone(),
-                    action,
-                    path: candidate.path.clone(),
-                    message: "builtin rule 'pii_phone' matched".to_owned(),
-                    excerpt: clip(&number.format().mode(Mode::E164).to_string()),
-                });
-            }
-        }
-    }
-
-    findings
-}
-
-fn run_pii_address_basic_detector(
-    detector: &DetectorConfig,
-    tool_name: &str,
-    candidates: &[TextCandidate],
-) -> Vec<Finding> {
-    let action = PolicyStatus::from(detector.action);
-    let mut findings = Vec::new();
-
-    let jp_postal = Regex::new(r"\b\d{3}-\d{4}\b").expect("valid regex");
-    let us_street = Regex::new(
-        r"\b\d{1,6}\s+[A-Za-z0-9.\-\s]+\s(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\b",
-    )
-    .expect("valid regex");
-
-    for candidate in filter_targets(detector.target, tool_name, candidates) {
-        if !detector.decode && candidate.decoded {
-            continue;
-        }
-        if jp_postal.is_match(&candidate.text) || us_street.is_match(&candidate.text) {
-            findings.push(Finding {
-                detector: detector.name.clone(),
-                action,
-                path: candidate.path.clone(),
-                message: "builtin rule 'pii_address_basic' matched".to_owned(),
-                excerpt: clip(candidate.text.as_str()),
-            });
-        }
-    }
-
-    findings
 }
 
 fn run_credential_entropy_detector(
     detector: &DetectorConfig,
     tool_name: &str,
     candidates: &[TextCandidate],
+    min_length: Option<usize>,
+    entropy_milli_threshold: Option<u32>,
 ) -> Vec<Finding> {
     let action = PolicyStatus::from(detector.action);
     let mut findings = Vec::new();
-    let min_length = detector.min_length.unwrap_or(20);
-    let threshold = detector.entropy_milli_threshold.unwrap_or(3800) as f64 / 1000.0;
+    let min_length = min_length.unwrap_or(20);
+    let threshold = entropy_milli_threshold.unwrap_or(3800) as f64 / 1000.0;
 
     for candidate in filter_targets(detector.target, tool_name, candidates) {
         if !detector.decode && candidate.decoded {
@@ -517,15 +446,6 @@ fn split_word_candidates(input: &str) -> impl Iterator<Item = &str> {
         .filter(|part| !part.is_empty())
 }
 
-fn extract_phone_candidates(input: &str) -> impl Iterator<Item = &str> {
-    input
-        .split(|c: char| !(c.is_ascii_digit() || matches!(c, '+' | '-' | '(' | ')' | ' ')))
-        .filter(|part| {
-            let digits = part.chars().filter(|ch| ch.is_ascii_digit()).count();
-            digits >= 10
-        })
-}
-
 fn shannon_entropy(input: &str) -> f64 {
     if input.is_empty() {
         return 0.0;
@@ -555,11 +475,14 @@ fn looks_like_credential_shape(token: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/' | '+' | '='))
 }
 
-fn run_high_risk_tool_detector(detector: &DetectorConfig, tool_name: &str) -> Vec<Finding> {
+fn run_high_risk_tool_detector(
+    detector: &DetectorConfig,
+    tool_name: &str,
+    patterns: &[String],
+) -> Vec<Finding> {
     let action = PolicyStatus::from(detector.action);
 
-    detector
-        .patterns
+    patterns
         .iter()
         .filter_map(|pattern| compile_glob(pattern))
         .filter(|matcher| matcher.is_match(tool_name))
@@ -617,8 +540,8 @@ mod tests {
     use serde_json::json;
 
     use crate::config::{
-        DecodingConfig, DetectorConfig, DetectorTarget, DetectorType, PolicyAction, PresetLevel,
-        SecurityConfig, SecurityMode,
+        BuiltinRuleConfig, DecodingConfig, DetectorConfig, DetectorRuleConfig, DetectorTarget,
+        PiiKind as ConfigPiiKind, PolicyAction, PresetLevel, SecurityConfig, SecurityMode,
     };
     use crate::security::LocalPiiProvider;
 
@@ -636,12 +559,12 @@ mod tests {
             },
             detectors: vec![DetectorConfig {
                 name: "secret-regex".to_owned(),
-                detector_type: DetectorType::Regex,
                 target: DetectorTarget::Arguments,
-                patterns: vec!["AKIA[0-9A-Z]{16}".to_owned()],
                 action: PolicyAction::Deny,
                 decode: true,
-                ..Default::default()
+                rule: DetectorRuleConfig::Regex {
+                    patterns: vec!["AKIA[0-9A-Z]{16}".to_owned()],
+                },
             }],
             tool_overrides: Default::default(),
         };
@@ -670,12 +593,12 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "tool-confirm".to_owned(),
-                detector_type: DetectorType::HighRiskTool,
                 target: DetectorTarget::ToolName,
-                patterns: vec!["github::*".to_owned()],
                 action: PolicyAction::Deny,
                 decode: false,
-                ..Default::default()
+                rule: DetectorRuleConfig::HighRiskTool {
+                    patterns: vec!["github::*".to_owned()],
+                },
             }],
             tool_overrides: Default::default(),
         };
@@ -693,41 +616,35 @@ mod tests {
         assert!(!result.findings.is_empty());
     }
 
-    #[test]
-    fn detects_email_with_builtin_rule() {
+    #[tokio::test]
+    async fn pii_rule_can_disable_specific_kinds() {
         let security = SecurityConfig {
             mode: SecurityMode::Enforce,
             presets: Vec::new(),
             preset_level: PresetLevel::Balanced,
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
-                name: "email-detector".to_owned(),
-                detector_type: DetectorType::Builtin,
-                rule: Some("pii_email".to_owned()),
+                name: "pii-detector".to_owned(),
                 target: DetectorTarget::Arguments,
                 action: PolicyAction::Confirm,
                 decode: true,
-                ..Default::default()
+                rule: DetectorRuleConfig::Builtin {
+                    rule: BuiltinRuleConfig::Pii {
+                        disabled: vec![ConfigPiiKind::Email],
+                    },
+                },
             }],
             tool_overrides: Default::default(),
         };
 
-        let args = json!({"text": "contact me at test@example.com"});
-        let result = PolicyEngine::evaluate_tool_call(
-            ToolCallInput {
-                tool_name: "mail::send",
-                arguments: &args,
-            },
-            &security,
-        );
+        let provider = LocalPiiProvider;
+        let args = json!({"text": "contact me at test@example.com or +1 415 555 2671"});
+        let result =
+            PolicyEngine::evaluate_with_provider("mail::send", &args, &security, &provider).await;
 
         assert_eq!(result.decision.status, PolicyStatus::Confirm);
-        assert!(
-            result
-                .findings
-                .iter()
-                .any(|f| f.message.contains("pii_email"))
-        );
+        assert!(result.findings.iter().any(|f| f.message.contains("(phone)")));
+        assert!(!result.findings.iter().any(|f| f.message.contains("(email)")));
     }
 
     #[test]
@@ -739,14 +656,15 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "entropy-secret".to_owned(),
-                detector_type: DetectorType::Builtin,
-                rule: Some("credential_entropy".to_owned()),
                 target: DetectorTarget::Arguments,
                 action: PolicyAction::Deny,
                 decode: true,
-                min_length: Some(20),
-                entropy_milli_threshold: Some(3500),
-                ..Default::default()
+                rule: DetectorRuleConfig::Builtin {
+                    rule: BuiltinRuleConfig::CredentialEntropy {
+                        min_length: Some(20),
+                        entropy_milli_threshold: Some(3500),
+                    },
+                },
             }],
             tool_overrides: Default::default(),
         };
@@ -780,12 +698,14 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "provider-pii".to_owned(),
-                detector_type: DetectorType::Builtin,
-                rule: Some("pii".to_owned()),
                 target: DetectorTarget::Arguments,
                 action: PolicyAction::Confirm,
                 decode: true,
-                ..Default::default()
+                rule: DetectorRuleConfig::Builtin {
+                    rule: BuiltinRuleConfig::Pii {
+                        disabled: Vec::new(),
+                    },
+                },
             }],
             tool_overrides: Default::default(),
         };

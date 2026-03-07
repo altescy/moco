@@ -391,8 +391,8 @@ mod tests {
     use serde_json::json;
 
     use crate::config::{
-        DecodingConfig, DetectorConfig, DetectorTarget, DetectorType, PolicyAction, PresetLevel,
-        SecurityConfig, SecurityMode,
+        DecodingConfig, DetectorConfig, DetectorRuleConfig, DetectorTarget, PolicyAction,
+        PresetLevel, SecurityConfig, SecurityMode,
     };
 
     use super::*;
@@ -475,16 +475,12 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "deny-github".to_owned(),
-                detector_type: DetectorType::HighRiskTool,
                 target: DetectorTarget::ToolName,
-                patterns: vec!["github::*".to_owned()],
-                keywords: Vec::new(),
-                rule: None,
-                region: None,
-                min_length: None,
-                entropy_milli_threshold: None,
                 action: PolicyAction::Deny,
                 decode: false,
+                rule: DetectorRuleConfig::HighRiskTool {
+                    patterns: vec!["github::*".to_owned()],
+                },
             }],
             tool_overrides: Default::default(),
         };
@@ -512,16 +508,12 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "deny-github".to_owned(),
-                detector_type: DetectorType::HighRiskTool,
                 target: DetectorTarget::ToolName,
-                patterns: vec!["github::*".to_owned()],
-                keywords: Vec::new(),
-                rule: None,
-                region: None,
-                min_length: None,
-                entropy_milli_threshold: None,
                 action: PolicyAction::Deny,
                 decode: false,
+                rule: DetectorRuleConfig::HighRiskTool {
+                    patterns: vec!["github::*".to_owned()],
+                },
             }],
             tool_overrides: Default::default(),
         };
@@ -553,16 +545,12 @@ mod tests {
             decoding: DecodingConfig::default(),
             detectors: vec![DetectorConfig {
                 name: "deny-secret-output".to_owned(),
-                detector_type: DetectorType::Regex,
                 target: DetectorTarget::Arguments,
-                patterns: vec!["AKIA[0-9A-Z]{16}".to_owned()],
-                keywords: Vec::new(),
-                rule: None,
-                region: None,
-                min_length: None,
-                entropy_milli_threshold: None,
                 action: PolicyAction::Deny,
                 decode: true,
+                rule: DetectorRuleConfig::Regex {
+                    patterns: vec!["AKIA[0-9A-Z]{16}".to_owned()],
+                },
             }],
             tool_overrides: Default::default(),
         };
