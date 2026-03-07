@@ -2,6 +2,17 @@
 name = "moco"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "MCP Observation and Control Operator: an MCP hub/proxy with security policy and audit logging"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/altescy/moco"
+homepage = "https://github.com/altescy/moco"
+keywords = ["mcp", "proxy", "gateway", "security", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 async-trait = "0.1.89"
