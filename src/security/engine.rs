@@ -96,10 +96,7 @@ impl PolicyEngine {
 
         for detector in &security.detectors {
             let DetectorRuleConfig::Builtin {
-                rule:
-                    BuiltinRuleConfig::Pii {
-                        disabled,
-                    },
+                rule: BuiltinRuleConfig::Pii { disabled },
             } = &detector.rule
             else {
                 continue;
@@ -256,8 +253,12 @@ fn run_detector(
         DetectorRuleConfig::Keyword { keywords } => {
             run_keyword_detector(detector, tool_name, candidates, keywords)
         }
-        DetectorRuleConfig::Builtin { rule } => run_builtin_detector(detector, tool_name, candidates, rule),
-        DetectorRuleConfig::HighRiskTool { patterns } => run_high_risk_tool_detector(detector, tool_name, patterns),
+        DetectorRuleConfig::Builtin { rule } => {
+            run_builtin_detector(detector, tool_name, candidates, rule)
+        }
+        DetectorRuleConfig::HighRiskTool { patterns } => {
+            run_high_risk_tool_detector(detector, tool_name, patterns)
+        }
     }
 }
 
@@ -643,8 +644,18 @@ mod tests {
             PolicyEngine::evaluate_with_provider("mail::send", &args, &security, &provider).await;
 
         assert_eq!(result.decision.status, PolicyStatus::Confirm);
-        assert!(result.findings.iter().any(|f| f.message.contains("(phone)")));
-        assert!(!result.findings.iter().any(|f| f.message.contains("(email)")));
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.message.contains("(phone)"))
+        );
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|f| f.message.contains("(email)"))
+        );
     }
 
     #[test]

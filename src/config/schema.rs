@@ -457,16 +457,20 @@ mod tests {
         };
 
         let resolved = raw.resolve();
-        assert!(resolved
-            .security
-            .detectors
-            .iter()
-            .any(|d| d.name == "preset::pii-basic::provider"));
-        assert!(resolved
-            .security
-            .detectors
-            .iter()
-            .any(|d| d.name == "preset::credential-standard::entropy"));
+        assert!(
+            resolved
+                .security
+                .detectors
+                .iter()
+                .any(|d| d.name == "preset::pii-basic::provider")
+        );
+        assert!(
+            resolved
+                .security
+                .detectors
+                .iter()
+                .any(|d| d.name == "preset::credential-standard::entropy")
+        );
     }
 
     #[test]
