@@ -27,6 +27,10 @@ pub struct ConfigManager;
 
 impl ConfigManager {
     #[must_use]
+    pub fn default_global_config_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|p| p.join("moco").join("config.toml"))
+    }
+
     pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
         let mut current = Some(start_dir);
         while let Some(dir) = current {
