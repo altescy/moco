@@ -159,7 +159,8 @@ fn resolve_global_config_path() -> Option<PathBuf> {
 async fn run_serve(command: ServeCommand) -> Result<(), Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let global_config = resolve_global_config_path();
-    let config = ConfigManager::load_resolved(global_config.as_deref(), &cwd, command.config.as_deref())?;
+    let config =
+        ConfigManager::load_resolved(global_config.as_deref(), &cwd, command.config.as_deref())?;
 
     let mut gateway = Gateway::new(config.security.clone());
 
@@ -238,7 +239,8 @@ async fn run_list(command: ListCommand) -> Result<(), Box<dyn std::error::Error>
     let cwd = std::env::current_dir()?;
     let config_path = resolve_project_config_path(&cwd, command.config.as_deref());
     let global_config = resolve_global_config_path();
-    let config = ConfigManager::load_resolved(global_config.as_deref(), &cwd, command.config.as_deref())?;
+    let config =
+        ConfigManager::load_resolved(global_config.as_deref(), &cwd, command.config.as_deref())?;
 
     if config.mcp.servers.is_empty() {
         println!("{}", "Moco MCP Servers".bold().truecolor(232, 236, 241));
