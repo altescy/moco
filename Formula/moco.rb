@@ -2,19 +2,19 @@
 class Moco < Formula
   desc "MCP Observation and Control Operator"
   homepage "https://github.com/altescy/moco"
-  version "0.1.0"
+  version "0.2.0"
 
   if OS.mac?
     if Hardware::CPU.arm?
-      url "https://github.com/altescy/moco/releases/download/v0.1.0/moco-v0.1.0-aarch64-apple-darwin.tar.gz"
-      sha256 "e3107487653249d5abbd4fdb170605daf401a612d11858e373864474df699046"
+      url "https://github.com/altescy/moco/releases/download/v0.2.0/moco-v0.2.0-aarch64-apple-darwin.tar.gz"
+      sha256 "b24148833969a66118d9b73afa86287bfee664b054d5a6b2755857533a0c4a72"
     else
-      url "https://github.com/altescy/moco/releases/download/v0.1.0/moco-v0.1.0-x86_64-apple-darwin.tar.gz"
-      sha256 "a1f069e013fd9247b2f1667446c3f1c195e5e4986209d63f238528c63f8873c0"
+      url "https://github.com/altescy/moco/releases/download/v0.2.0/moco-v0.2.0-x86_64-apple-darwin.tar.gz"
+      sha256 "9e52c2af9082f08bda182ec6a3c0e788b8fabfcedeff10e2eb722c051a218c48"
     end
   elsif OS.linux?
-    url "https://github.com/altescy/moco/releases/download/v0.1.0/moco-v0.1.0-x86_64-unknown-linux-gnu.tar.gz"
-    sha256 "0519fa47c4bdd8ff930c3c3f3d7e2622fa1eaa39906415396e0f08421c650512"
+    url "https://github.com/altescy/moco/releases/download/v0.2.0/moco-v0.2.0-x86_64-unknown-linux-gnu.tar.gz"
+    sha256 "31e40f8160b473c42ab90dee8c6f86553df0790c644ccfa9d9ea9706d1fc1e9e"
   end
 
   head "https://github.com/altescy/moco.git", branch: "main"
